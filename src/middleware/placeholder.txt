@@ -1,0 +1,1 @@
+wxPushService defaults here — placeholder for the service instance
