@@ -254,51 +254,76 @@ def main():
 
     print()
 
-    # ===== 构建优化卡片消息并发送到微信 =====
-    token = "afe064ab9d6f4db1b0aac211555d54e3"
+    # ===== 构建 HTML 样式推送 =====
     now_str = datetime.now().strftime('%Y%m%d')
-    ALERT_TITLE = f"基金日报 {now_str}"
+    style = """
+    <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI'; background:#f5f5f5; padding: 0; margin: 0; }
+    .card { background: white; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .card h3 { margin: 0 0 8px 0; font-size: 18px; }
+    .metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+    .metric { background: #f0f0f0; border-radius: 8px; padding: 6px 12px; font-size: 14px; }
+    .metric.positive { color: #e74c3c; font-weight: bold; }
+    .metric.negative { color: #27ae60; font-weight: bold; }
+    .buy_ret { font-size: 16px; font-weight: bold; margin-top: 8px; }
+    .alert_signal { color: #e74c3c; font-weight: bold; }
+    .profit_signal { color: #2ecc71; font-weight: bold; }
+    .divider { border-bottom: 1px solid #ddd; margin: 8px 0; }
+    </style>
+    """
+    content = f"<html><head>{style}</head><body>"
+    content += f"<h2 style='text-align:center; color:#333;'>基金日报 {now_str}</h2>"
 
-    md_content = ""
+    signals = {a[0]: a[2] for a in alerts}
 
     for item in results:
         code = item['code']
         name = item['name']
         stop_loss = item['stop_loss']
         stop_profit = item['stop_profit']
-        buy_ret_str = f"购入回报 {item['buy']:+.2f}%  " if item['buy'] is not None else "购入回报 -  "
+        signal_type = signals.get(code)
 
-        # 根据报警状态加标记
-        alert_mark = ""
-        if item['buy'] is not None:
-            if stop_profit != 0 and item['buy'] >= stop_profit:
-                alert_mark = " ⚠️止盈"
-            if stop_loss != 0 and item['buy'] <= stop_loss:
-                alert_mark = " ⚠️止损"
+        color = ''
+        if signal_type == '止盈':
+            color = '❌'
+        elif signal_type == '止损':
+            color = '⬆'
 
-        md_content += (
-            f"---\n"
-            f"**{name}** ({code}){alert_mark}\n\n"
-            f"日涨跌 {item['dod']:+.2f}% | "
-            f"周 {item['wow']:+.2f}% | "
-            f"月 {item['mom']:+.2f}% | "
-            f"季 {item['qoq']:+.2f}%\n"
-            f"半年 {item['hoh']:+.2f}% | "
-            f"年 {item['yoy']:+.2f}% | "
-            f"YTD {item['ytd']:+.2f}%\n"
-            f"{buy_ret_str} 持仓金额 ¥{item['amount']}\n\n"
-        )
+        pos_class = 'positive' if item['buy'] is not None and item['buy'] > 0 else 'negative'
+        buy_ret_str = f"{item['buy']:+.2f}%" if item['buy'] is not None else "-"
 
-    # 止损止盈报警
+        record = f"<div class='card'>"
+        record += f"<h3>{color} {name} ({code})</h3>"
+        record += "<div class='metrics'>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>d {item['dod']:+.2f}%</span>"
+        record += f"<span class='metric'><span style='color:#666;'>Ⓦ</span>w {item['wow']:+.2f}%</span>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>m {item['mom']:+.2f}%</span>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>q {item['qoq']:+.2f}%</span>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['hoh']:+.2f}%半年</span>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['yoy']:+.2f}%年</span>"
+        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['ytd']:+.2f}%YTD</span>"
+        record += "</div>"
+        record += f"<div class='buy_ret'>📊️ {buy_ret_str}</span>"
+        record += f" <span class='{pos_class}'>"
+        if signal_type:
+            record += f"<span class='alert_signal'>⬆️ {signal_type} 信号触发</span>"
+        record += "</div></div>"
+
+        content += record
+
     if alerts:
-        md_content += "\n---\n"
-        md_content += "## ⚠️ 触达信号\n\n"
+        content += "<br><div class='card'>"
+        content += "<h3>⚠️ 止盈/止损提醒</h3>"
         for code, name, atype, cur, th in alerts:
-            md_content += f"- {name} ({code}) {atype} {cur:+.2f}% (触发{th:+.2f}%)\n"
+            content += f"<p>● {name} ({code})：{atype} {cur:+.2f}% (触发{th:+.2f}%)</p>"
+        content += "</div>"
 
-    md_content += f"\n_ 生成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_"
+    content += "</body></html>"
 
-    send_pushplus(token, ALERT_TITLE, md_content)
+    token = "afe064ab9d6f4db1b0aac211555d54e3"
+    ALERT_TITLE = f"基金日报 {now_str}"
+
+    send_pushplus(token, ALERT_TITLE, content)
 
 
 if __name__ == '__main__':
