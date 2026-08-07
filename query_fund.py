@@ -254,70 +254,102 @@ def main():
 
     print()
 
-    # ===== 构建 HTML 样式推送 =====
+    # ===== 构建 HTML 表格样式推送 =====
     now_str = datetime.now().strftime('%Y%m%d')
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M')
+
     style = """
     <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI'; background:#f5f5f5; padding: 0; margin: 0; }
-    .card { background: white; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    .card h3 { margin: 0 0 8px 0; font-size: 18px; }
-    .metrics { display: flex; flex-wrap: wrap; gap: 8px; }
-    .metric { background: #f0f0f0; border-radius: 8px; padding: 6px 12px; font-size: 14px; }
-    .metric.positive { color: #e74c3c; font-weight: bold; }
-    .metric.negative { color: #27ae60; font-weight: bold; }
-    .buy_ret { font-size: 16px; font-weight: bold; margin-top: 8px; }
-    .alert_signal { color: #e74c3c; font-weight: bold; }
-    .profit_signal { color: #2ecc71; font-weight: bold; }
-    .divider { border-bottom: 1px solid #ddd; margin: 8px 0; }
+    body { font-family: -apple-system; background:#f5f5f5; padding: 0; margin: 0; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    thead th { background: #e8e8e8; color: #222; padding: 10px 6px; font-size: 12px; text-align: center; }
+    thead th:first-child { text-align: left; min-width: 120px; }
+    tbody td { padding: 10px 6px; text-align: center; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
+    tbody td:first-child { text-align: left; padding-left: 10px; font-weight: bold; }
+    .pos { color: #e74c3c; font-weight: bold; }
+    .neg { color: #27ae60; font-weight: bold; }
+    .alert { background: #fff0f0; }
+    .sig { background: #ffe6e6; }
+    .muted { color: #999; }
+    h3 { font-size: 20px; color: #333; }
+    .footer { color: #999; font-size: 12px; margin-top: 16px; }
     </style>
     """
+
     content = f"<html><head>{style}</head><body>"
-    content += f"<h2 style='text-align:center; color:#333;'>基金日报 {now_str}</h2>"
+    content += f"<h3>基金日报 {now_str}</h3>"
+
+    # 表格头
+    content += """
+    <table>
+    <thead><tr>
+    <th>基金</th>
+    <th>日涨跌</th>
+    <th>周涨跌</th>
+    <th>月涨跌</th>
+    <th>季涨跌</th>
+    <th>半年</th>
+    <th>一年</th>
+    <th>YTD</th>
+    <th>总回报</th>
+    <th>状态</th>
+    </tr></thead><tbody>
+    """
 
     signals = {a[0]: a[2] for a in alerts}
 
     for item in results:
         code = item['code']
         name = item['name']
-        stop_loss = item['stop_loss']
-        stop_profit = item['stop_profit']
+        buy = item['buy']
         signal_type = signals.get(code)
 
-        color = ''
+        row_style = 'class="alert"' if signal_type else ''
+        buy_cls = 'pos' if buy is not None and buy > 0 else 'neg'
+        buy_str = f'{buy:+.2f}%' if buy is not None else '-'
+
         if signal_type == '止盈':
-            color = '❌'
+            sig_label = '<b style="color:#e74c3c;">止盈</b>'
         elif signal_type == '止损':
-            color = '⬆'
+            sig_label = '<b style="color:#27ae60;">止损</b>'
+        else:
+            sig_label = '-'
 
-        pos_class = 'positive' if item['buy'] is not None and item['buy'] > 0 else 'negative'
-        buy_ret_str = f"{item['buy']:+.2f}%" if item['buy'] is not None else "-"
+        def sel(v):
+            val = v or 0
+            return 'pos' if val >= 0 else 'neg'
+        do = sel(item['dod'])
+        ww = sel(item['wow'])
+        mo = sel(item['mom'])
+        qq = sel(item['qoq'])
+        hh = sel(item['hoh'])
+        yo = sel(item['yoy'])
+        yd = sel(item['ytd'])
 
-        record = f"<div class='card'>"
-        record += f"<h3>{color} {name} ({code})</h3>"
-        record += "<div class='metrics'>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>d {item['dod']:+.2f}%</span>"
-        record += f"<span class='metric'><span style='color:#666;'>Ⓦ</span>w {item['wow']:+.2f}%</span>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>m {item['mom']:+.2f}%</span>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>q {item['qoq']:+.2f}%</span>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['hoh']:+.2f}%半年</span>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['yoy']:+.2f}%年</span>"
-        record += f"<span class='metric'><span style='color:#666;'>▼</span>{item['ytd']:+.2f}%YTD</span>"
-        record += "</div>"
-        record += f"<div class='buy_ret'>📊️ {buy_ret_str}</span>"
-        record += f" <span class='{pos_class}'>"
-        if signal_type:
-            record += f"<span class='alert_signal'>⬆️ {signal_type} 信号触发</span>"
-        record += "</div></div>"
+        content += f"""<tr {row_style}>
+        <td>{name} ({code})</td>
+        <td><span class="{do}">{item['dod']:+.2f}%</span></td>
+        <td><span class="{ww}">{item['wow']:+.2f}%</span></td>
+        <td><span class="{mo}">{item['mom']:+.2f}%</span></td>
+        <td><span class="{qq}">{item['qoq']:+.2f}%</span></td>
+        <td><span class="{hh}">{item['hoh']:+.2f}%</span></td>
+        <td><span class="{yo}">{item['yoy']:+.2f}%</span></td>
+        <td><span class="{yd}">{item['ytd']:+.2f}%</span></td>
+        <td class="{buy_cls}"><b>{buy_str}</b></td>
+        <td {('class="sig"' if signal_type else '')}>{sig_label}</td>
+        </tr>"""
 
-        content += record
+    content += "</tbody></table>"
 
+    # 止盈止损提醒
     if alerts:
-        content += "<br><div class='card'>"
+        content += "<br><div style='background:white;border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1);'>"
         content += "<h3>⚠️ 止盈/止损提醒</h3>"
         for code, name, atype, cur, th in alerts:
             content += f"<p>● {name} ({code})：{atype} {cur:+.2f}% (触发{th:+.2f}%)</p>"
         content += "</div>"
 
+    content += f"<p class='footer'>生成于 {ts}</p>"
     content += "</body></html>"
 
     token = "afe064ab9d6f4db1b0aac211555d54e3"
