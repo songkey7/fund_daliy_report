@@ -19,6 +19,9 @@ INDEX_LIST = [
     {'name': '恒生科技', 'source': 'hk', 'symbol': 'HSTECH'},
     {'name': '标普500', 'source': 'us', 'symbol': '.INX'},
     {'name': '纳斯达克100', 'source': 'us', 'symbol': '.NDX'},
+    {'name': '黄金', 'source': 'gold', 'symbol': None},
+    {'name': '白银', 'source': 'silver', 'symbol': None},
+    {'name': '美元/人民币', 'source': 'fx', 'symbol': None},
 ]
 
 
@@ -44,6 +47,30 @@ def query_us(symbol):
 
 
 QUERY_MAP = {'tx': query_tx, 'hk': query_hk, 'us': query_us}
+
+
+def query_gold():
+    df = ak.spot_golden_benchmark_sge()
+    df['date'] = pd.to_datetime(df['交易时间'])
+    df['price'] = df['早盘价'].astype(float)
+    return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+
+def query_silver():
+    df = ak.spot_silver_benchmark_sge()
+    df['date'] = pd.to_datetime(df['交易时间'])
+    df['price'] = df['早盘价'].astype(float)
+    return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+
+def query_fx():
+    df = ak.currency_boc_safe()
+    df['date'] = pd.to_datetime(df['日期'])
+    df['price'] = df['美元'].astype(float) / 100
+    return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+
+QUERY_MAP_SPECIAL = {'gold': query_gold, 'silver': query_silver, 'fx': query_fx}
 
 
 def calc_return(df, lookback_days):
@@ -104,9 +131,12 @@ def main():
         source = idx_info['source']
         symbol = idx_info['symbol']
 
-        query_func = QUERY_MAP[source]
+        query_func = QUERY_MAP.get(source) or QUERY_MAP_SPECIAL.get(source)
         try:
-            df = query_func(symbol)
+            if source in QUERY_MAP_SPECIAL:
+                df = query_func()
+            else:
+                df = query_func(symbol)
         except Exception as e:
             print(f"[{name}] query error: {e}", file=sys.stderr)
             continue
@@ -116,6 +146,7 @@ def main():
 
         item = {
             'name': name,
+            'source': source,
             'latest_date': df['date'].iloc[0],
             'price': df['price'].iloc[0],
             'dod': calc_return(df, 1),
@@ -141,10 +172,11 @@ def main():
         mom, _ = val_str(item['mom'])
         yoy, _ = val_str(item['yoy'])
         ytd, _ = val_str(item['ytd'])
+        price_str = f"{item['price']:.0f}" if item['source'] != 'fx' else f"{item['price']:.2f}"
         print(
             f"{item['name']:<12} "
             f"{item['latest_date'].strftime('%Y-%m-%d'):<12} "
-            f"{item['price']:>12.0f}  "
+            f"{price_str:>12}  "
             f"{dod:>8}  {wow:>8}  {mom:>8}  {yoy:>8}  {ytd:>8}"
         )
     print(sep)
@@ -177,12 +209,13 @@ def main():
     content += f"<div class='report-title'>大盘宽基指数</div>"
     content += f"<div class='report-date'>{ts}</div>"
 
-    a_indices = [r for r in results if r['name'] not in ('恒生科技', '标普500', '纳斯达克100')]
-    overseas = [r for r in results if r['name'] in ('恒生科技', '标普500', '纳斯达克100')]
+    a_indices = [r for r in results if r['source'] in ('tx',)]
+    hk_us = [r for r in results if r['source'] in ('hk', 'us')]
+    other = [r for r in results if r['source'] in ('gold', 'silver', 'fx')]
 
-    header = "<tr><th>指数</th><th>最新点位</th><th>日涨跌</th><th>WoW</th><th>MoM</th><th>YoY</th><th>YTD</th></tr>"
+    header = "<tr><th>指数</th><th>最新</th><th>日涨跌</th><th>WoW</th><th>MoM</th><th>YoY</th><th>YTD</th></tr>"
 
-    for title, group in [("A股", a_indices), ("境外", overseas)]:
+    for title, group in [("A股", a_indices), ("境外", hk_us), ("商品/汇率", other)]:
         content += f"<div class='section-title'>{title}</div>"
         content += f"<table>{header}<tbody>"
         for item in group:
@@ -193,7 +226,8 @@ def main():
             ytd, ytc = val_str(item['ytd'])
             content += f"<tr>"
             content += f"<td>{item['name']}</td>"
-            content += f"<td class='price'>{item['price']:,.0f}</td>"
+            price_html = f"{item['price']:.0f}" if item['source'] != 'fx' else f"{item['price']:.2f}"
+            content += f"<td class='price'>{price_html}</td>"
             content += f"<td class='{dc}'>{dod}</td>"
             content += f"<td class='{wc}'>{wow}</td>"
             content += f"<td class='{mc}'>{mom}</td>"
