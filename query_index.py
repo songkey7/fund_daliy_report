@@ -71,14 +71,14 @@ QUERY_MAP = {'tx': query_tx, 'hk': query_hk, 'us': query_us, 'fx': query_fx}
 
 
 def query_gold():
-    df = ak.futures_zh_daily_sina(symbol='AU0')
+    df = ak.spot_hist_sge(symbol='Au99.99')
     df['price'] = df['close'].astype(float)
     df['date'] = pd.to_datetime(df['date'])
     return df.sort_values('date', ascending=False).reset_index(drop=True)
 
 
 def query_silver():
-    df = ak.futures_zh_daily_sina(symbol='AG0')
+    df = ak.spot_hist_sge(symbol='Ag99.99')
     df['price'] = df['close'].astype(float)
     df['date'] = pd.to_datetime(df['date'])
     return df.sort_values('date', ascending=False).reset_index(drop=True)
