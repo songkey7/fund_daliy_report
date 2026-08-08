@@ -71,16 +71,16 @@ QUERY_MAP = {'tx': query_tx, 'hk': query_hk, 'us': query_us, 'fx': query_fx}
 
 
 def query_gold():
-    df = ak.spot_golden_benchmark_sge()
-    df['date'] = pd.to_datetime(df['交易时间'])
-    df['price'] = df['早盘价'].astype(float)
+    df = ak.futures_zh_daily_sina(symbol='AU0')
+    df['price'] = df['close'].astype(float)
+    df['date'] = pd.to_datetime(df['date'])
     return df.sort_values('date', ascending=False).reset_index(drop=True)
 
 
 def query_silver():
-    df = ak.spot_silver_benchmark_sge()
-    df['date'] = pd.to_datetime(df['交易时间'])
-    df['price'] = df['早盘价'].astype(float)
+    df = ak.futures_zh_daily_sina(symbol='AG0')
+    df['price'] = df['close'].astype(float)
+    df['date'] = pd.to_datetime(df['date'])
     return df.sort_values('date', ascending=False).reset_index(drop=True)
 
 
