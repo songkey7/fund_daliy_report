@@ -125,7 +125,7 @@ def main():
             'ytd': calc_ytd_return(df),
         }
         results.append(item)
-        print(f"[{name}] {item['price']:.2f} | {item['latest_date'].strftime('%Y-%m-%d')}", file=sys.stderr)
+        print(f"[{name}] {item['price']:.0f} | {item['latest_date'].strftime('%Y-%m-%d')}", file=sys.stderr)
 
     if not results:
         return
@@ -144,7 +144,7 @@ def main():
         print(
             f"{item['name']:<12} "
             f"{item['latest_date'].strftime('%Y-%m-%d'):<12} "
-            f"{item['price']:>12.2f}  "
+            f"{item['price']:>12.0f}  "
             f"{dod:>8}  {wow:>8}  {mom:>8}  {yoy:>8}  {ytd:>8}"
         )
     print(sep)
@@ -193,7 +193,7 @@ def main():
             ytd, ytc = val_str(item['ytd'])
             content += f"<tr>"
             content += f"<td>{item['name']}</td>"
-            content += f"<td class='price'>{item['price']:,.2f}</td>"
+            content += f"<td class='price'>{item['price']:,.0f}</td>"
             content += f"<td class='{dc}'>{dod}</td>"
             content += f"<td class='{wc}'>{wow}</td>"
             content += f"<td class='{mc}'>{mom}</td>"
