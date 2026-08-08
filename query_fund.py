@@ -1,75 +1,122 @@
 import sys
+import akshare as ak
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
-import akshare as ak
+from collections import defaultdict
 
-FUND_NAMES = {
-    '012349': '天弘恒生科技ETF联接(QDII)C',
-    '001156': '申万菱信新能源汽车混合',
-    '016710': '华安中证新能源汽车ETF联接C',
-    '018304': '华夏聚源优选三个月持有混合(FOF)A',
-    '012805': '广发恒生科技ETF联接(QDII)C',
-    '004744': '易方达创业板ETF联接C',
-    '022429': '天弘中证A500ETF联接C',
+POSITION_FILE = 'input/position.txt'
+PUSHPLUS_TOKEN = 'afe064ab9d6f4db1b0aac211555d54e3'
+
+
+def parse_position(filepath):
+    positions = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                positions.append({'platform': parts[0], 'code': parts[1]})
+    return positions
+
+
+def get_fund_info(code):
+    try:
+        df = ak.fund_individual_basic_info_xq(symbol=code)
+        if df is not None and not df.empty:
+            name_row = df[df['item'] == '基金名称']
+            name = name_row['value'].iloc[0] if not name_row.empty else code
+            type_row = df[df['item'] == '基金类型']
+            ftype = type_row['value'].iloc[0] if not type_row.empty else '-'
+            return name, ftype
+    except Exception:
+        pass
+
+    try:
+        df = ak.fund_open_fund_rank_em(symbol='全部')
+        match = df[df['基金代码'] == code]
+        if not match.empty:
+            return match['基金简称'].iloc[0], '-'
+    except Exception:
+        pass
+
+    return code, '-'
+
+
+RANK_CACHE = {}
+
+def map_to_rank_category(ftype):
+    if '指数' in ftype:
+        return '指数型'
+    for key in ('债券型', '混合型', '股票型', 'QDII', 'FOF'):
+        if key in ftype:
+            return key
+    return '全部'
+
+
+RANK_COLUMNS = {
+    '近1周': '近1周', '近1月': '近1月', '近3月': '近3月',
+    '近6月': '近6月', '近1年': '近1年', '今年来': '今年来',
 }
 
-def parse_fund_file(filepath):
-    records = []
-    with open(filepath, 'r', encoding='utf-8') as f:
-        lines = f.read().strip().split('\n')
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
+
+def get_fund_ranks(code, ftype):
+    category = map_to_rank_category(ftype)
+    for cat in (category, '指数型'):
+        if cat not in RANK_CACHE:
+            try:
+                df = ak.fund_open_fund_rank_em(symbol=cat)
+                if df is not None and not df.empty:
+                    RANK_CACHE[cat] = df
+                else:
+                    continue
+            except Exception:
+                continue
+        df = RANK_CACHE[cat]
+        match = df[df['基金代码'] == code]
+        if match.empty:
             continue
-        parts = line.split(',')
-        if len(parts) < 5:
-            continue
-        code, buy_date, amount, stop_loss, stop_profit = parts[:5]
-        records.append({
-            'code': code.strip(),
-            'buy_date': buy_date.strip(),
-            'amount': float(amount.strip()),
-            'stop_loss': float(stop_loss.strip()),
-            'stop_profit': float(stop_profit.strip()),
-        })
-    return records
+        total = len(df)
+        ranks = {}
+        for key, col in RANK_COLUMNS.items():
+            if col not in df.columns:
+                ranks[key] = None
+                continue
+            sorted_df = df.sort_values(col, ascending=False, na_position='last').reset_index(drop=True)
+            pos = sorted_df[sorted_df['基金代码'] == code].index
+            if len(pos) > 0:
+                ranks[key] = int(pos[0]) + 1
+            else:
+                ranks[key] = None
+        return ranks, total
+    return {}, 0
 
 
-def query_fund_all(code):
+def query_fund_nav(code):
     try:
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势", period="成立来")
         if df is None or df.empty:
             return None
 
-        col_map = {}
-        for c in df.columns:
-            c_str = str(c).strip()
-            if ('日' in c_str or '期' in c_str) and '日增长' not in c_str:
-                col_map[c] = 'date'
-            elif '净' in c_str and '日增长' not in c_str:
-                col_map[c] = 'nav'
-        if len(set(col_map.values())) < 2:
-            print(f"[{code}] duplicate mapping: {col_map}", file=sys.stderr)
-            return None
-        df = df.rename(columns=col_map)
-        if 'date' not in df.columns or 'nav' not in df.columns:
-            print(f"[{code}] col rename failed, columns: {list(df.columns)}", file=sys.stderr)
-            return None
+        df = df.rename(columns={
+            '净值日期': 'date',
+            '单位净值': 'nav',
+        })
         df['date'] = pd.to_datetime(df['date'])
         df['nav'] = df['nav'].astype(float)
         df = df.sort_values('date', ascending=False).reset_index(drop=True)
         return df
     except Exception as e:
-        print(f"[{code}] query error: {e}", file=sys.stderr)
+        print(f"[{code}] query nav error: {e}", file=sys.stderr)
         return None
 
 
 def calc_return(df, lookback_days):
     if df is None or df.empty:
         return None
-    data = df.copy()
-    data = data.sort_values('date', ascending=False).reset_index(drop=True)
+    data = df.sort_values('date', ascending=False).reset_index(drop=True)
     try:
         latest_nav = float(data['nav'].iloc[0])
     except (IndexError, ValueError):
@@ -80,7 +127,6 @@ def calc_return(df, lookback_days):
     idx = lookback_days
     if idx >= len(data):
         idx = len(data) - 1
-
     base_nav = float(data['nav'].iloc[idx])
     if base_nav == 0:
         return None
@@ -90,48 +136,20 @@ def calc_return(df, lookback_days):
 def calc_ytd_return(df):
     if df is None or df.empty:
         return None
-    data = df.copy()
-    data['date'] = pd.to_datetime(data['date'])
-    data = data.sort_values('date', ascending=False).reset_index(drop=True)
-
+    data = df.sort_values('date', ascending=False).reset_index(drop=True)
     latest_nav = float(data['nav'].iloc[0])
     this_year = data['date'].iloc[0].year
     start_date = pd.Timestamp(year=this_year, month=1, day=1)
-
     before = data[data['date'] <= start_date]
     if before.empty:
         return None
-
     base_nav = float(before['nav'].iloc[0])
     if base_nav == 0:
         return None
-
-    return round((latest_nav - base_nav) / base_nav * 100, 2)
-
-
-def calc_buy_return(df, buy_date_str):
-    if df is None or df.empty:
-        return None
-    data = df.copy()
-    data['date'] = pd.to_datetime(data['date'])
-    data = data.sort_values('date', ascending=False).reset_index(drop=True)
-
-    latest_nav = float(data['nav'].iloc[0])
-    buy_date = datetime.strptime(buy_date_str, '%Y%m%d')
-
-    found = data[data['date'] <= buy_date]
-    if found.empty:
-        return None
-
-    base_nav = float(found['nav'].iloc[0])
-    if base_nav == 0:
-        return None
-
     return round((latest_nav - base_nav) / base_nav * 100, 2)
 
 
 def send_pushplus(token, title, content):
-    """通过PushPlus推送消息"""
     url = "https://www.pushplus.plus/send"
     req_data = {
         "token": token,
@@ -146,25 +164,42 @@ def send_pushplus(token, title, content):
         return False
 
 
-def main():
-    records = parse_fund_file('fund.txt')
+def val_str(v):
+    """Format value with color class: returns (display_str, color_class)"""
+    if v is None:
+        return '-', ''
+    cls = 'pos' if v >= 0 else 'neg'
+    return f'{v:+.2f}%', cls
 
-    if not records:
-        print("未找到基金数据")
+
+def main():
+    positions = parse_position(POSITION_FILE)
+    if not positions:
+        print("未找到基金持仓数据")
         return
 
     results = []
 
-    for rec in records:
-        code = rec['code']
-        name = FUND_NAMES.get(code, code)
-        df = query_fund_all(code)
+    for pos in positions:
+        code = pos['code']
+        platform = pos['platform']
+
+        name, ftype = get_fund_info(code)
+        ranks, rank_total = get_fund_ranks(code, ftype)
+        rank_str = f"{ranks.get('近1年', '-')}/{rank_total}" if rank_total > 0 else '-/-'
+        print(f"[{code}] {name} | {ftype} | 近1年{rank_str}", file=sys.stderr)
+
+        df = query_fund_nav(code)
         if df is None:
             continue
 
         item = {
             'code': code,
             'name': name,
+            'platform': platform,
+            'ftype': ftype,
+            'ranks': ranks,
+            'rank_total': rank_total,
             'latest_date': df['date'].iloc[0],
             'nav': df['nav'].iloc[0],
             'dod': calc_return(df, 1),
@@ -174,188 +209,125 @@ def main():
             'hoh': calc_return(df, 126),
             'yoy': calc_return(df, 252),
             'ytd': calc_ytd_return(df),
-            'buy': calc_buy_return(df, rec['buy_date']),
-            'buy_date': rec['buy_date'],
-            'amount': rec['amount'],
-            'stop_loss': rec['stop_loss'],
-            'stop_profit': rec['stop_profit'],
         }
         results.append(item)
 
     if not results:
         return
 
-    names_width = max(len(item['name']) for item in results) + 2
-    sep = "-" * (200)
+    # Group by platform
+    groups = defaultdict(list)
+    for item in results:
+        groups[item['platform']].append(item)
+
+    # ====== Terminal output ======
+    sep = "-" * 180
     print(sep)
-    print(
-        f"{'代码':<10} {'名称':<{names_width}} {'日期':<12} {'净值':>10} "
-        f"{'日涨跌':>8} {'周涨跌':>8} {'月涨跌':>8} {'季涨跌':>8} "
-        f"{'半年':>8} {'年涨跌':>8} {'YTD':>8} {'购入回报':>8}  "
-        f"{'购入日期':<10} {'购入金额':>10} {'止损':>5} {'止盈':>5}"
+    header = (
+        f"{'代码':<8} {'名称':<28} {'日期':<12} {'净值':>10} "
+        f"{'日涨跌':>8} {'WoW':>8} {'MoM':>8} {'QoQ':>8} "
+        f"{'HoH':>8} {'YoY':>8} {'YTD':>8}"
     )
+    print(header)
     print(sep)
 
-    for item in results:
-        nav_f = format(item['nav'], '10.4f') if item['nav'] is not None else "    -     "
-        dod = format(item['dod'], '+8.2f') + "%" if item['dod'] is not None else "       -"
-        wow = format(item['wow'], '+8.2f') + "%" if item['wow'] is not None else "       -"
-        mom = format(item['mom'], '+8.2f') + "%" if item['mom'] is not None else "       -"
-        qoq = format(item['qoq'], '+8.2f') + "%" if item['qoq'] is not None else "       -"
-        hoh = format(item['hoh'], '+8.2f') + "%" if item['hoh'] is not None else "       -"
-        yoy = format(item['yoy'], '+8.2f') + "%" if item['yoy'] is not None else "       -"
-        ytd = format(item['ytd'], '+8.2f') + "%" if item['ytd'] is not None else "       -"
-        buy_ret = format(item['buy'], '+8.2f') + "%" if item['buy'] is not None else "       -"
+    for platform, items in groups.items():
+        print(f"\n  【{platform}】")
+        for item in items:
+            nav_f = f"{item['nav']:10.4f}" if item['nav'] is not None else "    -     "
+            dod, _ = val_str(item['dod'])
+            wow, _ = val_str(item['wow'])
+            mom, _ = val_str(item['mom'])
+            qoq, _ = val_str(item['qoq'])
+            hoh, _ = val_str(item['hoh'])
+            yoy, _ = val_str(item['yoy'])
+            ytd, _ = val_str(item['ytd'])
 
-        print(
-            f"{item['code']:<10} "
-            f"{item['name']:<{names_width}} "
-            f"{item['latest_date'].strftime('%Y-%m-%d'):<12} "
-            f"{nav_f}  "
-            f"{dod}  "
-            f"{wow}  "
-            f"{mom}  "
-            f"{qoq}  "
-            f"{hoh}  "
-            f"{yoy}  "
-            f"{ytd}  "
-            f"{buy_ret}  "
-            f"{item['buy_date']:<10} "
-            f"{item['amount']:>10.0f} "
-            f"{item['stop_loss']:>+4.0f}% "
-            f"{item['stop_profit']:>+4.0f}%"
-        )
+            print(
+                f"{item['code']:<8} "
+                f"{item['name']:<28} "
+                f"{item['latest_date'].strftime('%Y-%m-%d'):<12} "
+                f"{nav_f}  "
+                f"{dod:>8}  {wow:>8}  {mom:>8}  {qoq:>8}  "
+                f"{hoh:>8}  {yoy:>8}  {ytd:>8}"
+            )
     print(sep)
 
-    alerts = []
-    for item in results:
-        code = item['code']
-        name = item['name']
-        buy_ret = item['buy']
-        stop_loss = item['stop_loss']
-        stop_profit = item['stop_profit']
-
-        if buy_ret is not None:
-            if stop_profit != 0 and buy_ret >= stop_profit:
-                alerts.append((code, name, '止盈', buy_ret, stop_profit))
-            if stop_loss != 0 and buy_ret <= stop_loss:
-                alerts.append((code, name, '止损', buy_ret, stop_loss))
-
-    if alerts:
-        print("\n" + "="*60)
-        print("  ⚠️  触发信号")
-        print("="*60)
-        for a in alerts:
-            code, name, atype, cur, th = a
-            print(f"  {code} {name} 触发**{atype}** 信号，购入回报 {cur:+.2f}%，阈值: {th:+.2f}%")
-        print("="*60)
-    else:
-        print("\n  ✓ 没有触发止损或止盈信号")
-
-    print()
-
-    # ===== 构建 HTML 表格样式推送 =====
+    # ====== HTML 推送 ======
     now_str = datetime.now().strftime('%Y%m%d')
     ts = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     style = """
+    <meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>
     <style>
-    body { font-family: -apple-system; background:#f5f5f5; padding: 0; margin: 0; }
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    thead th { background: #e8e8e8; color: #222; padding: 10px 6px; font-size: 12px; text-align: center; }
-    thead th:first-child { text-align: left; min-width: 120px; }
-    tbody td { padding: 10px 6px; text-align: center; font-size: 13px; border-bottom: 1px solid #f0f0f0; }
-    tbody td:first-child { text-align: left; padding-left: 10px; font-weight: bold; }
-    .pos { color: #e74c3c; font-weight: bold; }
-    .neg { color: #27ae60; font-weight: bold; }
-    .alert { background: #fff0f0; }
-    .sig { background: #ffe6e6; }
-    .muted { color: #999; }
-    h3 { font-size: 20px; color: #333; }
-    .footer { color: #999; font-size: 12px; margin-top: 16px; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:-apple-system; background:#f5f5f5; padding:12px 8px 24px; -webkit-text-size-adjust:100%; }
+    .report-title { font-size:20px; font-weight:800; color:#1a1a1a; text-align:center; padding:10px 0 4px; }
+    .report-date { font-size:12px; color:#999; text-align:center; margin-bottom:12px; }
+    .platform-title { font-size:14px; font-weight:700; color:#555; margin:14px 0 6px 4px; padding-left:4px; border-left:3px solid #4a90d9; }
+    .fund-card { background:white; border-radius:14px; padding:14px; margin:8px 0; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+    .fund-card .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+    .fund-card .name { font-size:15px; font-weight:700; color:#1a1a1a; flex:1; line-height:1.3; }
+    .fund-card .nav-info { text-align:right; white-space:nowrap; margin-left:8px; }
+    .fund-card .nav-val { font-size:18px; font-weight:700; color:#333; }
+    .fund-card .nav-dod { font-size:14px; font-weight:700; margin-top:4px; }
+    .fund-card .grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px 4px; }
+    .fund-card .grid .cell { text-align:center; padding:4px 2px; background:#f8f9fa; border-radius:8px; line-height:1.5; }
+    .fund-card .grid .label { color:#888; font-size:10px; }
+    .fund-card .grid .rank { color:#aaa; font-size:10px; }
+    .fund-card .grid .rank-num { color:#555; }
+    .value { font-size:15px; font-weight:700; white-space:nowrap; }
+    .value.pos { color:#e74c3c; }
+    .value.neg { color:#27ae60; }
+    .footer { text-align:center; color:#bbb; font-size:12px; margin-top:16px; padding:8px; }
     </style>
     """
 
-    content = f"<html><head>{style}</head><body>"
-    content += f"<h3>基金日报 {now_str}</h3>"
+    content = f"<html><head><meta charset='utf-8'>{style}</head><body>"
+    content += f"<div class='report-title'>基金日报</div>"
+    content += f"<div class='report-date'>{ts}</div>"
 
-    # 表格头
-    content += """
-    <table>
-    <thead><tr>
-    <th>基金</th>
-    <th>日涨跌</th>
-    <th>周涨跌</th>
-    <th>月涨跌</th>
-    <th>季涨跌</th>
-    <th>半年</th>
-    <th>一年</th>
-    <th>YTD</th>
-    <th>总回报</th>
-    <th>状态</th>
-    </tr></thead><tbody>
-    """
+    for platform, items in groups.items():
+        content += f"<div class='platform-title'>{platform}</div>"
+        for item in items:
+            nav_str = f"{item['nav']:.4f}" if item['nav'] is not None else '-'
 
-    signals = {a[0]: a[2] for a in alerts}
+            metrics = [
+                ('WoW', item['wow'], '近1周'),
+                ('MoM', item['mom'], '近1月'),
+                ('QoQ', item['qoq'], '近3月'),
+                ('HoH', item['hoh'], '近6月'),
+                ('YoY', item['yoy'], '近1年'),
+                ('YTD', item['ytd'], '今年来'),
+            ]
 
-    for item in results:
-        code = item['code']
-        name = item['name']
-        buy = item['buy']
-        signal_type = signals.get(code)
+            metric_html = ''
+            for label, v, rank_key in metrics:
+                s, cls = val_str(v)
+                r = item['ranks'].get(rank_key)
+                rank_part = f"<div class='rank'>(<span class='rank-num'>{r}</span>/{item['rank_total']})</div>" if r else ''
+                metric_html += f"<div class='cell'><span class='label'>{label}</span><br><span class='value {cls}'>{s}</span>{rank_part}</div>"
 
-        row_style = 'class="alert"' if signal_type else ''
-        buy_cls = 'pos' if buy is not None and buy > 0 else 'neg'
-        buy_str = f'{buy:+.2f}%' if buy is not None else '-'
+            dod_str, dod_cls = val_str(item['dod'])
 
-        if signal_type == '止盈':
-            sig_label = '<b style="color:#e74c3c;">止盈</b>'
-        elif signal_type == '止损':
-            sig_label = '<b style="color:#27ae60;">止损</b>'
-        else:
-            sig_label = '-'
+            content += f"""<div class="fund-card">
+            <div class="header">
+            <div class="name">{item['name']}<br><span style="font-size:12px;color:#999;font-weight:400;">{item['code']} · {item['ftype']}</span></div>
+            <div class="nav-info"><div class="nav-val">{nav_str}</div><div class="nav-dod value {dod_cls}">{dod_str}</div></div>
+            </div>
+            <div class="grid">{metric_html}</div></div>"""
 
-        def sel(v):
-            val = v or 0
-            return 'pos' if val >= 0 else 'neg'
-        do = sel(item['dod'])
-        ww = sel(item['wow'])
-        mo = sel(item['mom'])
-        qq = sel(item['qoq'])
-        hh = sel(item['hoh'])
-        yo = sel(item['yoy'])
-        yd = sel(item['ytd'])
-
-        content += f"""<tr {row_style}>
-        <td>{name} ({code})</td>
-        <td><span class="{do}">{item['dod']:+.2f}%</span></td>
-        <td><span class="{ww}">{item['wow']:+.2f}%</span></td>
-        <td><span class="{mo}">{item['mom']:+.2f}%</span></td>
-        <td><span class="{qq}">{item['qoq']:+.2f}%</span></td>
-        <td><span class="{hh}">{item['hoh']:+.2f}%</span></td>
-        <td><span class="{yo}">{item['yoy']:+.2f}%</span></td>
-        <td><span class="{yd}">{item['ytd']:+.2f}%</span></td>
-        <td class="{buy_cls}"><b>{buy_str}</b></td>
-        <td {('class="sig"' if signal_type else '')}>{sig_label}</td>
-        </tr>"""
-
-    content += "</tbody></table>"
-
-    # 止盈止损提醒
-    if alerts:
-        content += "<br><div style='background:white;border-radius:12px;padding:16px;box-shadow:0 2px 8px rgba(0,0,0,0.1);'>"
-        content += "<h3>⚠️ 止盈/止损提醒</h3>"
-        for code, name, atype, cur, th in alerts:
-            content += f"<p>● {name} ({code})：{atype} {cur:+.2f}% (触发{th:+.2f}%)</p>"
-        content += "</div>"
-
-    content += f"<p class='footer'>生成于 {ts}</p>"
+    content += f"<div class='footer'>生成于 {ts}</div>"
     content += "</body></html>"
 
-    token = "afe064ab9d6f4db1b0aac211555d54e3"
     ALERT_TITLE = f"基金日报 {now_str}"
+    ok = send_pushplus(PUSHPLUS_TOKEN, ALERT_TITLE, content)
+    print(f"\nPushPlus 推送{'成功' if ok else '失败'}")
 
-    send_pushplus(token, ALERT_TITLE, content)
+    # Save local preview
+    with open('preview.html', 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("已保存 preview.html")
 
 
 if __name__ == '__main__':
