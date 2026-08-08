@@ -1,4 +1,5 @@
 import sys
+import os
 import akshare as ak
 import pandas as pd
 import requests
@@ -321,8 +322,11 @@ def main():
     content += "</body></html>"
 
     ALERT_TITLE = f"基金日报 {now_str}"
-    ok = send_pushplus(PUSHPLUS_TOKEN, ALERT_TITLE, content)
-    print(f"\nPushPlus 推送{'成功' if ok else '失败'}")
+    if os.environ.get('GITHUB_ACTIONS'):
+        ok = send_pushplus(PUSHPLUS_TOKEN, ALERT_TITLE, content)
+        print(f"\nPushPlus 推送{'成功' if ok else '失败'}")
+    else:
+        print("\n本地运行，跳过推送")
 
     # Save local preview
     with open('preview.html', 'w', encoding='utf-8') as f:

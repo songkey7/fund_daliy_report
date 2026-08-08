@@ -1,4 +1,5 @@
 import sys
+import os
 import akshare as ak
 import pandas as pd
 import requests
@@ -159,17 +160,15 @@ def main():
     body { font-family:-apple-system; background:#f5f5f5; padding:12px 8px 24px; -webkit-text-size-adjust:100%; }
     .report-title { font-size:20px; font-weight:800; color:#1a1a1a; text-align:center; padding:10px 0 4px; }
     .report-date { font-size:12px; color:#999; text-align:center; margin-bottom:12px; }
-    .index-card { background:white; border-radius:14px; padding:14px; margin:8px 0; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
-    .index-card .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
-    .index-card .name { font-size:16px; font-weight:700; color:#1a1a1a; }
-    .index-card .price-info { text-align:right; }
-    .index-card .price-val { font-size:20px; font-weight:700; color:#333; }
-    .index-card .grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px 4px; }
-    .index-card .grid .cell { text-align:center; padding:4px 2px; background:#f8f9fa; border-radius:8px; line-height:1.5; }
-    .index-card .grid .cell .label { color:#888; font-size:10px; }
-    .value { font-size:13px; font-weight:700; }
-    .value.pos { color:#e74c3c; }
-    .value.neg { color:#27ae60; }
+    .section-title { font-size:14px; font-weight:700; color:#555; margin:12px 0 6px 4px; padding-left:4px; border-left:3px solid #4a90d9; }
+    table { width:100%; border-collapse:collapse; background:white; border-radius:12px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+    th { background:#f0f3f8; color:#666; font-size:11px; font-weight:600; padding:8px 4px; text-align:center; white-space:nowrap; }
+    th:first-child { text-align:left; padding-left:10px; }
+    td { font-size:12px; padding:7px 4px; text-align:center; border-bottom:1px solid #f0f0f0; white-space:nowrap; }
+    td:first-child { font-weight:600; text-align:left; padding-left:10px; color:#222; }
+    td.price { font-weight:700; color:#333; }
+    .pos { color:#e74c3c; font-weight:600; }
+    .neg { color:#27ae60; font-weight:600; }
     .footer { text-align:center; color:#bbb; font-size:12px; margin-top:16px; padding:8px; }
     </style>
     """
@@ -178,39 +177,39 @@ def main():
     content += f"<div class='report-title'>大盘宽基指数</div>"
     content += f"<div class='report-date'>{ts}</div>"
 
-    # Separate A股 and 境外
     a_indices = [r for r in results if r['name'] not in ('恒生科技', '标普500', '纳斯达克100')]
     overseas = [r for r in results if r['name'] in ('恒生科技', '标普500', '纳斯达克100')]
 
-    for group in (a_indices, overseas):
+    header = "<tr><th>指数</th><th>最新点位</th><th>日涨跌</th><th>WoW</th><th>MoM</th><th>YoY</th><th>YTD</th></tr>"
+
+    for title, group in [("A股", a_indices), ("境外", overseas)]:
+        content += f"<div class='section-title'>{title}</div>"
+        content += f"<table>{header}<tbody>"
         for item in group:
-            dod_str, dod_cls = val_str(item['dod'])
-
-            metrics = [
-                ('日涨跌', item['dod']),
-                ('WoW', item['wow']),
-                ('MoM', item['mom']),
-                ('YoY', item['yoy']),
-                ('YTD', item['ytd']),
-            ]
-
-            metric_html = ''
-            for label, v in metrics:
-                s, cls = val_str(v)
-                metric_html += f"<div class='cell'><span class='label'>{label}</span><br><span class='value {cls}'>{s}</span></div>"
-
-            content += f"""<div class="index-card">
-            <div class="header">
-            <div class="name">{item['name']}</div>
-            <div class="price-info"><div class="price-val">{item['price']:,.2f}</div><div class="value {dod_cls}" style="font-size:13px;">{dod_str}</div></div>
-            </div>
-            <div class="grid">{metric_html}</div></div>"""
+            dod, dc = val_str(item['dod'])
+            wow, wc = val_str(item['wow'])
+            mom, mc = val_str(item['mom'])
+            yoy, yc = val_str(item['yoy'])
+            ytd, ytc = val_str(item['ytd'])
+            content += f"<tr>"
+            content += f"<td>{item['name']}</td>"
+            content += f"<td class='price'>{item['price']:,.2f}</td>"
+            content += f"<td class='{dc}'>{dod}</td>"
+            content += f"<td class='{wc}'>{wow}</td>"
+            content += f"<td class='{mc}'>{mom}</td>"
+            content += f"<td class='{yc}'>{yoy}</td>"
+            content += f"<td class='{ytc}'>{ytd}</td>"
+            content += f"</tr>"
+        content += "</tbody></table>"
 
     content += f"<div class='footer'>生成于 {ts}</div>"
     content += "</body></html>"
 
-    ok = send_pushplus(PUSHPLUS_TOKEN, f"指数日报 {now_str}", content)
-    print(f"\nPushPlus 推送{'成功' if ok else '失败'}")
+    if os.environ.get('GITHUB_ACTIONS'):
+        ok = send_pushplus(PUSHPLUS_TOKEN, f"指数日报 {now_str}", content)
+        print(f"\nPushPlus 推送{'成功' if ok else '失败'}")
+    else:
+        print("\n本地运行，跳过推送")
 
     with open('preview_index.html', 'w', encoding='utf-8') as f:
         f.write(content)
