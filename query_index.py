@@ -21,7 +21,12 @@ INDEX_LIST = [
     {'name': '纳斯达克100', 'source': 'us', 'symbol': '.NDX'},
     {'name': '黄金', 'source': 'gold', 'symbol': None},
     {'name': '白银', 'source': 'silver', 'symbol': None},
-    {'name': '美元/人民币', 'source': 'fx', 'symbol': None},
+    {'name': '美元/人民币', 'source': 'fx', 'symbol': '美元'},
+    {'name': '欧元/人民币', 'source': 'fx', 'symbol': '欧元'},
+    {'name': '日元/人民币', 'source': 'fx', 'symbol': '日元'},
+    {'name': '英镑/人民币', 'source': 'fx', 'symbol': '英镑'},
+    {'name': '港元/人民币', 'source': 'fx', 'symbol': '港元'},
+    {'name': '澳元/人民币', 'source': 'fx', 'symbol': '澳元'},
 ]
 
 
@@ -46,7 +51,23 @@ def query_us(symbol):
     return df.sort_values('date', ascending=False).reset_index(drop=True)
 
 
-QUERY_MAP = {'tx': query_tx, 'hk': query_hk, 'us': query_us}
+_FX_DF = None
+
+
+def query_fx(symbol):
+    global _FX_DF
+    if _FX_DF is None:
+        df = ak.currency_boc_safe()
+        df['date'] = pd.to_datetime(df['日期'])
+        _FX_DF = df
+    df = _FX_DF.copy()
+    df['price'] = df[symbol].astype(float)
+    if symbol != '日元':
+        df['price'] = df['price'] / 100
+    return df.sort_values('date', ascending=False).reset_index(drop=True)
+
+
+QUERY_MAP = {'tx': query_tx, 'hk': query_hk, 'us': query_us, 'fx': query_fx}
 
 
 def query_gold():
@@ -63,14 +84,7 @@ def query_silver():
     return df.sort_values('date', ascending=False).reset_index(drop=True)
 
 
-def query_fx():
-    df = ak.currency_boc_safe()
-    df['date'] = pd.to_datetime(df['日期'])
-    df['price'] = df['美元'].astype(float) / 100
-    return df.sort_values('date', ascending=False).reset_index(drop=True)
-
-
-QUERY_MAP_SPECIAL = {'gold': query_gold, 'silver': query_silver, 'fx': query_fx}
+QUERY_MAP_SPECIAL = {'gold': query_gold, 'silver': query_silver}
 
 
 def calc_return(df, lookback_days):
@@ -211,11 +225,12 @@ def main():
 
     a_indices = [r for r in results if r['source'] in ('tx',)]
     hk_us = [r for r in results if r['source'] in ('hk', 'us')]
-    other = [r for r in results if r['source'] in ('gold', 'silver', 'fx')]
+    commodity = [r for r in results if r['source'] in ('gold', 'silver')]
+    fx_list = [r for r in results if r['source'] in ('fx',)]
 
     header = "<tr><th>指数</th><th>最新</th><th>日涨跌</th><th>WoW</th><th>MoM</th><th>YoY</th><th>YTD</th></tr>"
 
-    for title, group in [("A股", a_indices), ("境外", hk_us), ("商品/汇率", other)]:
+    for title, group in [("A股", a_indices), ("境外", hk_us), ("商品", commodity), ("汇率", fx_list)]:
         content += f"<div class='section-title'>{title}</div>"
         content += f"<table>{header}<tbody>"
         for item in group:
