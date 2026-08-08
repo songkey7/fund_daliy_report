@@ -1,1 +1,0 @@
-export { messageTemplates } from './MessageTemplates'
