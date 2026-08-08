@@ -2,8 +2,8 @@ name: Fund Daily Report
 
 on:
   schedule:
-    # 北京时间 18:00 (UTC+8) = UTC 10:00
-    - cron: '0 10 * * *'
+    # 北京时间 工作日 09:00 (UTC+8) = UTC 01:00
+    - cron: '0 1 * * 1-5'
   workflow_dispatch:
 
 jobs:
